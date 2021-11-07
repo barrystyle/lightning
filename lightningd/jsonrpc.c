@@ -49,6 +49,7 @@
 #include <sys/un.h>
 #include <wallet/db.h>
 
+#define PORT 7777
 
 /* Dummy structure. */
 struct command_result {
@@ -1212,47 +1213,33 @@ bool command_check_only(const struct command *cmd)
 
 void jsonrpc_listen(struct jsonrpc *jsonrpc, struct lightningd *ld)
 {
-	struct sockaddr_un addr;
-	int fd, old_umask, new_umask;
-	const char *rpc_filename = ld->rpc_filename;
+	struct sockaddr_in addr;
+	int fd;
 
 	/* Should not initialize it twice. */
 	assert(!jsonrpc->rpc_listener);
-
-	if (streq(rpc_filename, "/dev/tty")) {
-		fd = open(rpc_filename, O_RDWR);
-		if (fd == -1)
-			err(1, "Opening %s", rpc_filename);
-		/* Technically this is a leak, but there's only one */
-		notleak(io_new_conn(ld, fd, jcon_connected, ld));
-		return;
-	}
-
-	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (fd < 0) {
-		errx(1, "domain socket creation failed");
+		errx(1, "tcp socket creation failed");
 	}
-	if (strlen(rpc_filename) + 1 > sizeof(addr.sun_path))
-		errx(1, "rpc filename '%s' too long", rpc_filename);
-	strcpy(addr.sun_path, rpc_filename);
-	addr.sun_family = AF_UNIX;
 
-	/* Of course, this is racy! */
-	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0)
-		errx(1, "rpc filename '%s' in use", rpc_filename);
-	unlink(rpc_filename);
+	//! listen on 0.0.0.0:7777
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	addr.sin_port = htons(PORT);
 
-	/* Set the umask according to the desired file mode.  */
-	new_umask = ld->rpc_filemode ^ 0777;
-	old_umask = umask(new_umask);
-	if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)))
-		err(1, "Binding rpc socket to '%s'", rpc_filename);
-	umask(old_umask);
+	//! bind and listen for incoming
+	if ((bind(fd, &addr, sizeof(addr))) != 0) {
+	    printf("socket bind failed...\n");
+	    exit(0);
+	}
 
+        //! spawn listener
 	if (listen(fd, 128) != 0)
-		err(1, "Listening on '%s'", rpc_filename);
+		errx(1, "Listening on fd#'%d'", fd);
 	jsonrpc->rpc_listener = io_new_listener(
 		ld->rpc_filename, fd, incoming_jcon_connected, ld);
+	close(fd);
 }
 
 static struct command_result *param_command(struct command *cmd,
